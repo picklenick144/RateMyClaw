@@ -46,11 +46,11 @@ The submit script will:
 - Auto-install `sentence-transformers` if needed (one-time, ~80MB)
 - Generate a 384-dim embedding **locally** (text never leaves the machine)
 - Submit tags + embedding + maturity to ratemyclaw.com
-- Print score, grade, recommendations, and a shareable URL
+- Print score, grade, and a link to the full breakdown
 
-### Step 4: Share!
+### Step 4: View results!
 
-Give the user their score URL. They can share it, tweet it, or use the recommendations to improve.
+Give the user their score URL. The full breakdown, insights, and recommendations are on the website — not in the terminal. This drives engagement and keeps the scoring details where they belong.
 
 ## Privacy Architecture
 

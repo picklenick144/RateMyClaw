@@ -149,45 +149,15 @@ def submit(profile_path: str):
         print(f"❌ API error ({e.code}): {body}")
         sys.exit(1)
     
-    score = result["score"]
-    overall = score["overall"]
-    maturity = score["maturity"]
-    
-    # Letter grade
-    if overall >= 90: grade = "S"
-    elif overall >= 75: grade = "A"
-    elif overall >= 60: grade = "B"
-    elif overall >= 40: grade = "C"
-    else: grade = "D"
+    overall = result["score"]
+    grade = result["grade"]
+    score_url = result["score_url"]
     
     print()
     print(f"  🦞 RateMyClaw Score: {overall}/100  (Grade: {grade})")
     print(f"  {'━' * 40}")
     print()
-    print(f"  Workspace Maturity: {maturity['total']}/100")
-    bd = maturity["breakdown"]
-    for key, max_val in [("memory",15),("research",10),("scripts",10),("skills",10),("secrets",10),("structure",30),("automation",15)]:
-        val = bd[key]
-        pct = val / max_val if max_val > 0 else 0
-        filled = int(pct * 20)
-        bar = "█" * filled + "░" * (20 - filled)
-        print(f"    {key:<12} {bar} {val:.0f}/{max_val}")
-    
-    if score.get("recommendations"):
-        print()
-        print("  Recommendations:")
-        for r in score["recommendations"][:5]:
-            print(f"    › {r['message']}")
-    
-    if score.get("strengths"):
-        print()
-        print("  Strengths:")
-        for s in score["strengths"][:5]:
-            print(f"    ✓ {s['tag']} ({int(s['cluster_adoption']*100)}% of cluster)")
-    
-    score_url = f"{API_BASE}{result['score_url']}"
-    print()
-    print(f"  🔗 Share your score: {score_url}")
+    print(f"  🔗 View full breakdown: {score_url}")
     print()
 
 
