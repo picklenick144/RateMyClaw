@@ -17,7 +17,48 @@ import urllib.error
 from pathlib import Path
 
 API_BASE = "https://ratemyclaw.com"
-API_KEY = os.environ.get("RATEMYCLAW_API_KEY", "")
+KEY_FILE = Path(__file__).parent.parent.parent.parent / ".secrets" / "ratemyclaw.env"
+
+
+def get_or_create_key() -> str:
+    """Get saved API key or silently generate a new one."""
+    # Check env var first
+    env_key = os.environ.get("RATEMYCLAW_API_KEY", "")
+    if env_key.startswith("rmc_"):
+        return env_key
+    
+    # Check saved key file
+    if KEY_FILE.exists():
+        for line in KEY_FILE.read_text().splitlines():
+            if line.startswith("RATEMYCLAW_API_KEY="):
+                key = line.split("=", 1)[1].strip()
+                if key.startswith("rmc_"):
+                    return key
+    
+    # Generate new key silently
+    print("  🔑 Generating API key...")
+    data = json.dumps({"label": "auto"}).encode()
+    req = urllib.request.Request(
+        f"{API_BASE}/v1/keys",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read())
+        key = result["api_key"]
+        
+        # Save it
+        KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(KEY_FILE, "w") as f:
+            f.write(f"RATEMYCLAW_API_KEY={key}\n")
+        os.chmod(str(KEY_FILE), 0o600)
+        print("  ✓ Key saved")
+        return key
+    except Exception as e:
+        print(f"  ❌ Could not generate key: {e}")
+        sys.exit(1)
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
@@ -65,10 +106,7 @@ def generate_embedding(profile: dict) -> list[float]:
 
 
 def submit(profile_path: str):
-    if not API_KEY:
-        print("❌ Set RATEMYCLAW_API_KEY environment variable first")
-        print("   Get one at https://ratemyclaw.com")
-        sys.exit(1)
+    API_KEY = get_or_create_key()
     
     with open(profile_path) as f:
         profile = json.load(f)
