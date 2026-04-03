@@ -1,10 +1,12 @@
 """
 Submit a generated profile to RateMyClaw API.
+Generates a privacy-preserving embedding locally before submission.
 
+Requirements:
+    pip install sentence-transformers
+    
 Usage:
     RATEMYCLAW_API_KEY=your-key python3 submit_profile.py [profile.json]
-
-If no file given, looks for generated_profile.json in the skill directory.
 """
 
 import os
@@ -16,6 +18,51 @@ from pathlib import Path
 
 API_BASE = "https://ratemyclaw.com"
 API_KEY = os.environ.get("RATEMYCLAW_API_KEY", "")
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+
+
+def generate_embedding(profile: dict) -> list[float]:
+    """Generate a 384-dim embedding locally from workspace summary text.
+    
+    The text is generated from the profile + any local context,
+    then embedded using sentence-transformers. The text NEVER leaves
+    this machine — only the resulting float array is submitted.
+    """
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        print("⚠️  Installing sentence-transformers (one-time, ~80MB)...")
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "sentence-transformers", "-q"])
+        from sentence_transformers import SentenceTransformer
+    
+    # Build a rich text summary from the profile
+    # This captures the semantic meaning of the workspace
+    parts = []
+    
+    for key in ["domains", "tools", "patterns", "integrations"]:
+        vals = profile.get(key, [])
+        if vals:
+            parts.append(f"{key}: {', '.join(vals)}")
+    
+    if profile.get("skills_installed"):
+        parts.append(f"installed skills: {', '.join(profile['skills_installed'])}")
+    
+    parts.append(f"automation level: {profile.get('automation_level', 'unknown')}")
+    parts.append(f"stage: {profile.get('stage', 'unknown')}")
+    
+    # If there's a workspace summary from the profile generator, include it
+    if profile.get("_workspace_summary"):
+        parts.append(profile["_workspace_summary"])
+    
+    text = ". ".join(parts)
+    
+    model = SentenceTransformer(EMBEDDING_MODEL)
+    embedding = model.encode(text).tolist()
+    
+    print(f"  ✓ Generated {len(embedding)}-dim embedding locally (text never left this machine)")
+    return embedding
+
 
 def submit(profile_path: str):
     if not API_KEY:
@@ -26,6 +73,9 @@ def submit(profile_path: str):
     with open(profile_path) as f:
         profile = json.load(f)
     
+    print("🔐 Generating embedding locally...")
+    embedding = generate_embedding(profile)
+    
     # Build the submission payload
     payload = {
         "profile": {
@@ -33,12 +83,15 @@ def submit(profile_path: str):
             "tools": profile.get("tools", []),
             "patterns": profile.get("patterns", []),
             "integrations": profile.get("integrations", []),
+            "skills_installed": profile.get("skills_installed", []),
             "automation_level": profile.get("automation_level", "manual"),
             "stage": profile.get("stage", "building"),
         },
+        "embedding": embedding,
         "maturity": profile.get("maturity", {}),
     }
     
+    print("📤 Submitting profile (tags + embedding only, no raw content)...")
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{API_BASE}/v1/profile",

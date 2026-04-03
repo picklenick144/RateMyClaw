@@ -410,12 +410,13 @@ def generate_profile(workspace_path: str, max_tags: int = 12) -> dict:
     maturity = calculate_maturity_score(signals)
     
     profile = {
-        "schema_version": "0.1.0",
+        "schema_version": "0.2.0",
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "domains": domains[:max_tags],
         "tools": tools[:max_tags],
         "patterns": patterns[:max_tags],
         "integrations": list(dict.fromkeys(integrations))[:max_tags],  # dedupe, preserve order
+        "skills_installed": signals["skills"],  # ClawHub skill slugs
         "automation_level": automation,
         "stage": stage,
         "maturity": maturity
