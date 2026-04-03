@@ -108,9 +108,14 @@ def generate_embedding(profile: dict) -> list[float]:
     
     text = ". ".join(parts)
     
+    print("  ⏳ Loading embedding model (first run downloads ~80MB, may take a minute)...")
+    sys.stdout.flush()
     model = SentenceTransformer(EMBEDDING_MODEL)
-    embedding = model.encode(text).tolist()
+    print("  ✓ Model loaded")
     
+    print("  ⏳ Generating embedding...")
+    sys.stdout.flush()
+    embedding = model.encode(text).tolist()
     print(f"  ✓ Generated {len(embedding)}-dim embedding locally")
     return embedding
 
@@ -122,6 +127,7 @@ def submit(profile_path: str):
         profile = json.load(f)
     
     print("🔐 Generating embedding locally...")
+    sys.stdout.flush()
     embedding = generate_embedding(profile)
     
     # Build the submission payload
@@ -140,6 +146,7 @@ def submit(profile_path: str):
     }
     
     print("📤 Submitting to ratemyclaw.com (tags + embedding only)...")
+    sys.stdout.flush()
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{API_BASE}/v1/profile",
