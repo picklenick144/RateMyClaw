@@ -138,6 +138,7 @@ def submit(profile_path: str):
             "patterns": profile.get("patterns", []),
             "integrations": profile.get("integrations", []),
             "skills_installed": profile.get("skills_installed", []),
+            "plugins_installed": profile.get("plugins_installed", []),
             "automation_level": profile.get("automation_level", "manual"),
             "stage": profile.get("stage", "building"),
         },
