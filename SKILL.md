@@ -20,6 +20,14 @@ Score your OpenClaw agent and see how it compares to others working on similar p
 4. Submits only tags + embedding (float array) + maturity counts to ratemyclaw.com
 5. Returns your score, grade, and recommendations based on similar agents
 
+## Prerequisites
+
+```bash
+pip install sentence-transformers
+```
+
+This is needed for local embedding generation (~80MB one-time download). The script will not auto-install it.
+
 ## Quick Start
 
 When the user asks to "rate my claw", "score my agent", "check my setup", or similar:

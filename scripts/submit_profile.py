@@ -17,7 +17,7 @@ import urllib.error
 from pathlib import Path
 
 API_BASE = "https://ratemyclaw.com"
-KEY_FILE = Path(__file__).parent.parent.parent.parent / ".secrets" / "ratemyclaw.env"
+KEY_FILE = Path(__file__).parent.parent / ".ratemyclaw_key"
 
 
 def get_or_create_key() -> str:
@@ -72,10 +72,9 @@ def generate_embedding(profile: dict) -> list[float]:
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError:
-        print("⚠️  Installing sentence-transformers (one-time, ~80MB)...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "sentence-transformers", "-q"])
-        from sentence_transformers import SentenceTransformer
+        print("❌ sentence-transformers is required but not installed.")
+        print("   Install it with: pip install sentence-transformers")
+        sys.exit(1)
     
     # Build a rich text summary from the profile
     # This captures the semantic meaning of the workspace
