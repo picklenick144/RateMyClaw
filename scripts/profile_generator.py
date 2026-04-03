@@ -61,6 +61,21 @@ DOMAIN_SIGNALS = {
     "e-commerce": ["shopify", "stripe", "e-commerce", "ecommerce", "cart"],
     "education": ["course", "curriculum", "teaching", "student", "lesson"],
     "design": ["figma", "design system", "ui/ux", "wireframe", "prototype"],
+    "database-management": ["database", "migration", "schema", "sql query", "orm"],
+    "web-scraping": ["scraping", "scrape", "crawl", "beautifulsoup", "puppeteer"],
+    "browser-automation": ["browser automat", "playwright", "selenium", "puppeteer", "headless"],
+    "pdf-processing": ["pdf", "ocr", "document extract"],
+    "image-generation": ["image generat", "dall-e", "midjourney", "stable diffusion"],
+    "video-production": ["video", "ffmpeg", "editing", "youtube"],
+    "audio-processing": ["audio", "whisper", "transcri", "tts", "speech"],
+    "translation": ["translat", "locali", "i18n", "multilingual"],
+    "documentation": ["documentat", "docs", "technical writing", "readme"],
+    "backup-recovery": ["backup", "restore", "disaster recovery"],
+    "api-development": ["api develop", "rest api", "endpoint", "swagger", "openapi"],
+    "rag": ["rag", "retrieval augmented", "vector search", "embeddings", "knowledge base"],
+    "crm": ["crm", "customer relat", "salesforce", "hubspot"],
+    "payments": ["payment", "stripe", "invoice", "billing"],
+    "testing-qa": ["test", "qa", "quality assur", "pytest", "jest", "unittest"],
 }
 
 TOOL_SIGNALS = {
@@ -89,6 +104,15 @@ TOOL_SIGNALS = {
     "markdown": [".md", "markdown"],
     "figma": ["figma"],
     "canva": ["canva"],
+    "supabase": ["supabase"],
+    "firebase": ["firebase", "firestore"],
+    "openai-api": ["openai", "gpt-4", "gpt-3", "dall-e"],
+    "anthropic-api": ["anthropic", "claude"],
+    "langchain": ["langchain"],
+    "llamaindex": ["llamaindex", "llama_index"],
+    "selenium": ["selenium", "webdriver"],
+    "playwright": ["playwright"],
+    "puppeteer": ["puppeteer"],
 }
 
 PATTERN_SIGNALS = {
@@ -115,6 +139,18 @@ PATTERN_SIGNALS = {
     "analytics": ["analytics", "metrics", "tracking"],
     "writing": ["writing", "draft", "article", "blog post"],
     "publishing": ["publish", "deploy content", "post"],
+    "web-scraping": ["scrape", "crawl", "beautifulsoup"],
+    "browser-automation": ["playwright", "selenium", "puppeteer", "headless browser"],
+    "pdf-extraction": ["pdf extract", "ocr", "document pars"],
+    "image-generation": ["image generat", "dall-e", "stable diffusion"],
+    "rag-retrieval": ["rag", "retrieval", "vector search", "knowledge base"],
+    "webhook-handling": ["webhook", "callback url", "event hook"],
+    "backup-restore": ["backup", "snapshot", "restore"],
+    "file-organization": ["file organiz", "folder structure", "cleanup"],
+    "api-testing": ["api test", "postman", "httpie", "curl test"],
+    "translation": ["translat", "locali", "i18n"],
+    "documentation-generation": ["docstring", "documentation generat", "auto-doc"],
+    "log-analysis": ["log analys", "log pars", "error track"],
 }
 
 INTEGRATION_SIGNALS = {
@@ -145,6 +181,19 @@ INTEGRATION_SIGNALS = {
     "datadog": ["datadog"],
     "zoom": ["zoom"],
     "google-sheets": ["google sheets", "gsheet"],
+    "openai": ["openai"],
+    "anthropic": ["anthropic", "claude"],
+    "supabase": ["supabase"],
+    "firebase": ["firebase"],
+    "zapier": ["zapier"],
+    "n8n": ["n8n"],
+    "twilio": ["twilio"],
+    "sendgrid": ["sendgrid"],
+    "mailchimp": ["mailchimp"],
+    "dropbox": ["dropbox"],
+    "google-drive": ["google drive", "gdrive"],
+    "onedrive": ["onedrive"],
+    "confluence": ["confluence"],
 }
 
 
