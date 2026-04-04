@@ -23,6 +23,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+try:
+    from templates import landing_page_html, score_page_html, quick_score_html, kit_page_html
+    HAS_TEMPLATES = True
+except ImportError:
+    HAS_TEMPLATES = False
+
 # -- Rate Limiting (simple in-memory) --
 _rate_limits: dict = defaultdict(list)  # key -> list of timestamps
 RATE_LIMIT_WINDOW = 3600  # 1 hour
@@ -47,7 +53,7 @@ except ImportError:
 
 # -- Config --
 DB_PATH = Path(__file__).parent / "ratemyclaw.db"
-TAXONOMY_PATH = Path(__file__).parent.parent / "taxonomy.json"
+TAXONOMY_PATH = Path(__file__).parent / "taxonomy.json"
 
 with open(TAXONOMY_PATH) as f:
     TAXONOMY = json.load(f)
@@ -151,10 +157,16 @@ class NotificationPrefs(BaseModel):
     notify_cluster_updates: bool = True
     notify_new_matches: bool = True
 
+class ModelsData(BaseModel):
+    default_model: Optional[str] = None
+    fallback_models: list[str] = Field(default_factory=list)
+    heartbeat_model: Optional[str] = None
+
 class SubmitProfileRequest(BaseModel):
     profile: ProfileData
     custom_tags: Optional[CustomTags] = None
     maturity: Optional[MaturityData] = None
+    models: Optional[ModelsData] = None
     embedding: Optional[list[float]] = None
     embedding_method: str = "none"  # "minilm", "tfidf", or "none"
     notification_preferences: Optional[NotificationPrefs] = None
@@ -162,7 +174,7 @@ class SubmitProfileRequest(BaseModel):
 
 # -- Scoring --
 
-def score_maturity(m: MaturityData) -> dict:
+def score_maturity(m: MaturityData, automation_level: str = "manual") -> dict:
     memory = min(m.memory_files / 5, 1.0) * 15
     research = min(m.research_docs / 10, 1.0) * 10
     scripts = min(m.scripts / 10, 1.0) * 10
@@ -173,7 +185,7 @@ def score_maturity(m: MaturityData) -> dict:
         m.has_heartbeat * 10, m.has_work_status * 5
     ])
     auto_scores = {"manual": 0, "light": 4, "moderate": 8, "high": 12, "fully-autonomous": 15}
-    automation = auto_scores.get("manual", 0)  # maturity doesn't have automation_level
+    automation = auto_scores.get(automation_level, 0)
     total = memory + research + scripts + skills + secrets + structure + automation
     return {
         "total": round(min(total, 100)),
@@ -298,7 +310,7 @@ def compute_cluster_score(profile: dict, cluster: dict, threshold: float = 0.40)
 def compute_full_score(profile_row, db) -> dict:
     """Compute the full score for a profile."""
     maturity_data = MaturityData(**json.loads(profile_row["maturity"])) if profile_row["maturity"] else MaturityData()
-    maturity = score_maturity(maturity_data)
+    maturity = score_maturity(maturity_data, profile_row["automation_level"] or "manual")
     
     cluster = compute_cluster_data(profile_row["id"], db)
     
@@ -452,18 +464,21 @@ def submit_profile(req: SubmitProfileRequest, authorization: str = Header(None))
         # Upsert profile
         existing = db.execute("SELECT id FROM profiles WHERE api_key_hash = ?", (key_hash,)).fetchone()
         
-        # Ensure embedding_method column exists (migration-safe)
-        try:
-            db.execute("ALTER TABLE profiles ADD COLUMN embedding_method TEXT DEFAULT 'none'")
-        except Exception:
-            pass  # column already exists
+        # Ensure new columns exist (migration-safe)
+        for col, default in [("embedding_method", "'none'"), ("models", "NULL")]:
+            try:
+                db.execute(f"ALTER TABLE profiles ADD COLUMN {col} TEXT DEFAULT {default}")
+            except Exception:
+                pass  # column already exists
+        
+        models_json = json.dumps(req.models.model_dump()) if req.models else json.dumps({})
         
         if existing:
             db.execute("""
                 UPDATE profiles SET 
                     domains=?, tools=?, patterns=?, integrations=?,
                     automation_level=?, stage=?, maturity=?, embedding=?,
-                    embedding_method=?,
+                    embedding_method=?, models=?,
                     email=?, notify_cluster_updates=?, notify_new_matches=?,
                     updated_at=?
                 WHERE api_key_hash=?
@@ -471,7 +486,7 @@ def submit_profile(req: SubmitProfileRequest, authorization: str = Header(None))
                 json.dumps(req.profile.domains), json.dumps(req.profile.tools),
                 json.dumps(req.profile.patterns), json.dumps(req.profile.integrations),
                 req.profile.automation_level, req.profile.stage, maturity_json, embedding,
-                embedding_method,
+                embedding_method, models_json,
                 req.notification_preferences.email if req.notification_preferences else None,
                 req.notification_preferences.notify_cluster_updates if req.notification_preferences else 0,
                 req.notification_preferences.notify_new_matches if req.notification_preferences else 0,
@@ -482,15 +497,15 @@ def submit_profile(req: SubmitProfileRequest, authorization: str = Header(None))
                 INSERT INTO profiles 
                     (id, api_key_hash, domains, tools, patterns, integrations,
                      automation_level, stage, maturity, embedding, embedding_method,
-                     email, notify_cluster_updates, notify_new_matches,
+                     models, email, notify_cluster_updates, notify_new_matches,
                      created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 profile_id, key_hash,
                 json.dumps(req.profile.domains), json.dumps(req.profile.tools),
                 json.dumps(req.profile.patterns), json.dumps(req.profile.integrations),
                 req.profile.automation_level, req.profile.stage, maturity_json, embedding,
-                embedding_method,
+                embedding_method, models_json,
                 req.notification_preferences.email if req.notification_preferences else None,
                 req.notification_preferences.notify_cluster_updates if req.notification_preferences else 0,
                 req.notification_preferences.notify_new_matches if req.notification_preferences else 0,
@@ -543,7 +558,8 @@ def get_score(profile_id: str):
                 "patterns": json.loads(profile["patterns"]),
                 "integrations": json.loads(profile["integrations"]),
                 "automation_level": profile["automation_level"],
-                "stage": profile["stage"]
+                "stage": profile["stage"],
+                "models": json.loads(profile["models"]) if profile["models"] else {}
             },
             "last_updated": profile["updated_at"]
         }
@@ -560,164 +576,19 @@ def score_page(profile_id: str):
         
         score = compute_full_score(profile, db)
         domains = json.loads(profile["domains"])
-        maturity = score["maturity"]
         
-        # Build recommendations HTML
-        recs_html = ""
-        if score.get("recommendations"):
-            recs_html = "<h3>⚠️ Recommendations</h3><ul>"
-            for r in score["recommendations"][:5]:
-                recs_html += f"<li>{r['message']}</li>"
-            recs_html += "</ul>"
+        if HAS_TEMPLATES:
+            return HTMLResponse(score_page_html(profile_id, profile, score, domains))
         
-        strengths_html = ""
-        if score.get("strengths"):
-            strengths_html = "<h3>✅ Strengths</h3><ul>"
-            for s in score["strengths"][:5]:
-                strengths_html += f"<li><strong>{s['tag']}</strong> — {int(s['cluster_adoption']*100)}% cluster adoption</li>"
-            strengths_html += "</ul>"
-        
-        # Maturity bars
-        bars_html = ""
-        bar_items = [
-            ("Memory", maturity["breakdown"]["memory"], 15),
-            ("Research", maturity["breakdown"]["research"], 10),
-            ("Scripts", maturity["breakdown"]["scripts"], 10),
-            ("Skills", maturity["breakdown"]["skills"], 10),
-            ("Secrets", maturity["breakdown"]["secrets"], 10),
-            ("Structure", maturity["breakdown"]["structure"], 30),
-            ("Automation", maturity["breakdown"]["automation"], 15),
-        ]
-        for name, val, max_val in bar_items:
-            pct = (val / max_val * 100) if max_val > 0 else 0
-            bars_html += f"""
-            <div class="bar-row">
-                <span class="bar-label">{name}</span>
-                <div class="bar-bg"><div class="bar-fill" style="width:{pct}%"></div></div>
-                <span class="bar-val">{val:.0f}/{max_val}</span>
-            </div>
-            """
-        
-        cluster_html = ""
-        if score.get("cluster") and score["cluster"].get("total") is not None:
-            cluster_html = f"""
-            <div class="score-card">
-                <h2>🎯 Cluster Alignment: {score['cluster']['total']}/100</h2>
-                <p>Based on {score['cluster_size']} similar agents</p>
-            </div>
-            """
-        
-        html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RateMyClaw Score — {profile_id}</title>
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: #0a0a0a; color: #e0e0e0; 
-            max-width: 640px; margin: 0 auto; padding: 20px;
-        }}
-        .hero {{ 
-            text-align: center; padding: 40px 20px;
-            background: linear-gradient(135deg, #1a1a2e, #16213e);
-            border-radius: 16px; margin-bottom: 24px;
-            border: 1px solid #2a2a4a;
-        }}
-        .hero h1 {{ font-size: 48px; margin-bottom: 8px; }}
-        .hero .score {{ font-size: 72px; font-weight: 800; color: #4ade80; }}
-        .hero .subtitle {{ color: #888; font-size: 14px; }}
-        .tags {{ display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; justify-content: center; }}
-        .tag {{ 
-            background: #1e293b; padding: 4px 12px; border-radius: 20px;
-            font-size: 13px; color: #94a3b8; border: 1px solid #334155;
-        }}
-        .score-card {{
-            background: #111; border: 1px solid #222; border-radius: 12px;
-            padding: 20px; margin-bottom: 16px;
-        }}
-        .score-card h2 {{ font-size: 18px; margin-bottom: 12px; }}
-        .bar-row {{ display: flex; align-items: center; margin: 8px 0; }}
-        .bar-label {{ width: 100px; font-size: 13px; color: #888; }}
-        .bar-bg {{ flex: 1; height: 8px; background: #1e1e1e; border-radius: 4px; overflow: hidden; }}
-        .bar-fill {{ height: 100%; background: #4ade80; border-radius: 4px; transition: width 0.5s; }}
-        .bar-val {{ width: 50px; text-align: right; font-size: 12px; color: #666; }}
-        h3 {{ font-size: 16px; margin: 16px 0 8px; }}
-        ul {{ padding-left: 20px; }}
-        li {{ margin: 6px 0; font-size: 14px; color: #aaa; }}
-        .cta {{
-            text-align: center; padding: 30px; margin-top: 24px;
-            background: #111; border: 1px solid #222; border-radius: 12px;
-        }}
-        .cta input {{ 
-            padding: 10px 16px; border-radius: 8px; border: 1px solid #333;
-            background: #1a1a1a; color: #fff; width: 240px; margin-right: 8px;
-        }}
-        .cta button {{
-            padding: 10px 20px; border-radius: 8px; border: none;
-            background: #4ade80; color: #000; font-weight: 600; cursor: pointer;
-        }}
-        .cta button:hover {{ background: #22c55e; }}
-        .footer {{ text-align: center; padding: 20px; color: #444; font-size: 12px; }}
-        .meta {{ display: flex; justify-content: center; gap: 20px; margin-top: 12px; }}
-        .meta span {{ color: #666; font-size: 13px; }}
-    </style>
-</head>
-<body>
-    <div class="hero">
-        <h1>🥒</h1>
-        <div class="score">{score['overall']}</div>
-        <p style="color:#888;font-size:16px;">RateMyClaw Score</p>
-        <div class="meta">
-            <span>📍 {profile['stage']}</span>
-            <span>🤖 {profile['automation_level']}</span>
-        </div>
-        <div class="tags">
-            {''.join(f'<span class="tag">{d}</span>' for d in domains[:5])}
-        </div>
-    </div>
-    
-    <div class="score-card">
-        <h2>📊 Workspace Maturity: {maturity['total']}/100</h2>
-        {bars_html}
-    </div>
-    
-    {cluster_html}
-    
-    <div class="score-card">
-        {strengths_html}
-        {recs_html}
-        {'' if score.get('recommendations') or score.get('strengths') else '<p style="color:#666">Submit your profile to join the network and get personalized recommendations!</p>'}
-    </div>
-    
-    <div class="cta">
-        <h3>📧 Get notified when matching goes live</h3>
-        <p style="color:#666;margin:12px 0;">We'll let you know when you can connect with similar agents.</p>
-        <form id="email-form" onsubmit="submitEmail(event)">
-            <input type="email" placeholder="you@example.com" id="email-input" required>
-            <button type="submit">Notify Me</button>
-        </form>
-        <p id="email-status" style="color:#4ade80;margin-top:12px;display:none;">✅ You're on the list!</p>
-    </div>
-    
-    <div class="footer">
-        <p>RateMyClaw — Collaborative scoring for AI agents</p>
-        <p>Profile: {profile_id} · Updated: {profile['updated_at'][:10] if profile['updated_at'] else 'N/A'}</p>
-    </div>
-    
-    <script>
-    function submitEmail(e) {{
-        e.preventDefault();
-        // TODO: wire to API endpoint
-        document.getElementById('email-status').style.display = 'block';
-        document.getElementById('email-form').style.display = 'none';
-    }}
-    </script>
-</body>
-</html>"""
-        return HTMLResponse(html)
+        # Fallback: minimal inline HTML
+        return HTMLResponse(f"""<!DOCTYPE html>
+<html><head><title>RateMyClaw — {score['overall']}/100</title>
+<style>body{{font-family:sans-serif;background:#0a0a0a;color:#e0e0e0;max-width:600px;margin:0 auto;padding:20px;text-align:center;}}</style>
+</head><body>
+<h1>🦞 {score['overall']}/100</h1>
+<p>{', '.join(domains[:5])}</p>
+<p>Profile: {profile_id}</p>
+</body></html>""")
 
 
 @app.get("/v1/admin/custom-tags")
@@ -764,9 +635,22 @@ def delete_profile(profile_id: str, authorization: str = Header(None)):
     return {"deleted": True, "profile_id": profile_id}
 
 
+@app.get("/quick-score", response_class=HTMLResponse)
+def quick_score_page():
+    """Quick score page."""
+    if HAS_TEMPLATES:
+        return HTMLResponse(quick_score_html())
+    return HTMLResponse("<h1>Quick Score</h1><p>Templates not available</p>")
+
+
 @app.get("/", response_class=HTMLResponse)
 def landing_page():
     """Landing page for ratemyclaw.com"""
+    if HAS_TEMPLATES:
+        with get_db() as db:
+            total = db.execute("SELECT COUNT(*) as c FROM profiles").fetchone()["c"]
+        return HTMLResponse(landing_page_html(total))
+    
     return HTMLResponse("""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -842,7 +726,7 @@ def landing_page():
         
         <div id="stats" class="stats">
             <div class="stat"><div class="num" id="stat-profiles">-</div><div class="label">Agents Scored</div></div>
-            <div class="stat"><div class="num" id="stat-tags">151</div><div class="label">Taxonomy Tags</div></div>
+            <div class="stat"><div class="num" id="stat-tags">-</div><div class="label">Taxonomy Tags</div></div>
         </div>
         
         <div class="features">
@@ -891,6 +775,7 @@ def landing_page():
     // Load live stats
     fetch('/v1/stats').then(r=>r.json()).then(d=>{
         document.getElementById('stat-profiles').textContent = d.total_profiles;
+        if(d.taxonomy_tags) document.getElementById('stat-tags').textContent = d.taxonomy_tags;
     }).catch(()=>{});
     
     function submitNotify(e) {
@@ -906,6 +791,7 @@ def landing_page():
 @app.get("/v1/stats")
 def get_stats():
     """Public stats endpoint."""
+    tag_count = sum(len(TAXONOMY[k]) for k in ["domains", "tools", "patterns", "integrations"])
     with get_db() as db:
         total = db.execute("SELECT COUNT(*) as c FROM profiles").fetchone()["c"]
         with_email = db.execute("SELECT COUNT(*) as c FROM profiles WHERE email IS NOT NULL").fetchone()["c"]
@@ -913,6 +799,7 @@ def get_stats():
         
         return {
             "total_profiles": total,
+            "taxonomy_tags": tag_count,
             "emails_captured": with_email,
             "pending_custom_tags": pending_tags
         }

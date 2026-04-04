@@ -268,6 +268,7 @@ def submit(profile_path: str):
         "embedding": embedding,  # None if no method available
         "embedding_method": embedding_method,  # "minilm", "tfidf", or "none"
         "maturity": profile.get("maturity", {}),
+        "models": profile.get("models", {}),
     }
     
     print("📤 Submitting to ratemyclaw.com (tags + embedding only)...")

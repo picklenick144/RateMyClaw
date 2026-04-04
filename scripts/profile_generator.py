@@ -289,7 +289,63 @@ def scan_workspace(workspace_path: str) -> dict:
     # Limit text content to prevent excessive processing
     signals["text_content"] = signals["text_content"][:50000]
     
+    # Detect model configuration from OpenClaw config
+    signals["models"] = _detect_models(ws)
+    
     return signals
+
+
+def _detect_models(ws: Path) -> dict:
+    """Extract model configuration from OpenClaw config.
+    
+    Only captures model name strings (e.g., "anthropic/claude-sonnet-4-6").
+    No API keys, tokens, or other secrets are read.
+    """
+    models = {
+        "default_model": None,
+        "fallback_models": [],
+        "heartbeat_model": None,
+    }
+    
+    # OpenClaw config is typically at ~/.openclaw/openclaw.json
+    config_path = ws.parent / "openclaw.json"
+    if not config_path.exists():
+        # Try common alternative locations
+        for alt in [ws / "openclaw.json", Path.home() / ".openclaw" / "openclaw.json"]:
+            if alt.exists():
+                config_path = alt
+                break
+    
+    if not config_path.exists():
+        return models
+    
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+        
+        # Extract default model
+        agents = config.get("agents", {})
+        defaults = agents.get("defaults", {})
+        model_config = defaults.get("model", {})
+        
+        if isinstance(model_config, str):
+            models["default_model"] = model_config
+        elif isinstance(model_config, dict):
+            models["default_model"] = model_config.get("primary")
+            models["fallback_models"] = model_config.get("fallbacks", [])
+        
+        # Check agent list for heartbeat model
+        agent_list = agents.get("list", [])
+        for agent in agent_list:
+            hb = agent.get("heartbeat", {})
+            if isinstance(hb, dict) and hb.get("model"):
+                models["heartbeat_model"] = hb["model"]
+                break
+        
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass
+    
+    return models
 
 
 def match_tags(text: str, signal_map: dict, valid_set: set, 
@@ -410,7 +466,7 @@ def generate_profile(workspace_path: str, max_tags: int = 12) -> dict:
     maturity = calculate_maturity_score(signals)
     
     profile = {
-        "schema_version": "0.2.0",
+        "schema_version": "0.3.0",
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "domains": domains[:max_tags],
         "tools": tools[:max_tags],
@@ -419,7 +475,8 @@ def generate_profile(workspace_path: str, max_tags: int = 12) -> dict:
         "skills_installed": signals["skills"],  # ClawHub skill slugs
         "automation_level": automation,
         "stage": stage,
-        "maturity": maturity
+        "maturity": maturity,
+        "models": signals.get("models", {}),
     }
     
     return profile
@@ -475,6 +532,15 @@ def print_profile(profile: dict):
     print(f"   Has MEMORY.md:   {'✅' if m['has_memory'] else '❌'}")
     print(f"   Has HEARTBEAT:   {'✅' if m['has_heartbeat'] else '❌'}")
     print(f"   Has WORK_STATUS: {'✅' if m['has_work_status'] else '❌'}")
+    
+    models = profile.get('models', {})
+    if models.get('default_model'):
+        print(f"\n🧠 Models:")
+        print(f"   Default:    {models['default_model']}")
+        if models.get('fallback_models'):
+            print(f"   Fallbacks:  {', '.join(models['fallback_models'])}")
+        if models.get('heartbeat_model'):
+            print(f"   Heartbeat:  {models['heartbeat_model']}")
     
     print(f"\n📝 Embedding text:")
     print(f"   {profile_to_embedding_text(profile)}")

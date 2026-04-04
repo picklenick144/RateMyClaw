@@ -2,7 +2,7 @@
 name: ratemyclaw
 description: Score your OpenClaw agent setup against similar agents. Scans your workspace, generates a local embedding for privacy-preserving semantic matching, and submits tags + embedding to ratemyclaw.com for scoring and cluster comparison.
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   author: picklenick144
   homepage: https://ratemyclaw.com
   repository: https://github.com/picklenick144/RateMyClaw
