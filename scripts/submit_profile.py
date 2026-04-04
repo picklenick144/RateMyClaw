@@ -292,9 +292,26 @@ def submit(profile_path: str):
         sys.exit(1)
     
     score_data = result.get("score", {})
-    overall = score_data.get("overall", result.get("score", "?"))
-    grade = score_data.get("grade", result.get("grade", "?"))
+    if isinstance(score_data, dict):
+        overall = score_data.get("overall", "?")
+    else:
+        overall = score_data  # legacy: flat integer
+    
+    # Compute grade from score
+    if isinstance(overall, (int, float)):
+        if overall >= 90: grade = "S"
+        elif overall >= 75: grade = "A"
+        elif overall >= 60: grade = "B"
+        elif overall >= 40: grade = "C"
+        else: grade = "D"
+    else:
+        grade = "?"
+    
+    # Build full score URL
+    profile_id = result.get("profile_id", "")
     score_url = result.get("score_url", "")
+    if score_url and not score_url.startswith("http"):
+        score_url = f"{API_BASE}{score_url}"
     
     print()
     print(f"  🦞 RateMyClaw Score: {overall}/100  (Grade: {grade})")

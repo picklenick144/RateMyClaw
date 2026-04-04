@@ -403,6 +403,14 @@ def startup():
     init_db()
 
 
+@app.post("/v1/keys")
+def generate_key(request: Request):
+    """Generate a free API key."""
+    import secrets as _secrets
+    key = "rmc_" + _secrets.token_hex(24)
+    return {"api_key": key, "message": "Save this key — it cannot be retrieved later."}
+
+
 @app.get("/v1/taxonomy")
 def get_taxonomy():
     """Return the current approved taxonomy."""
