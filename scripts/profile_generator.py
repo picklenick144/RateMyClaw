@@ -197,31 +197,6 @@ INTEGRATION_SIGNALS = {
 }
 
 
-def scan_plugins(workspace_path: str) -> list:
-    """Scan OpenClaw config for installed plugins. Returns plugin names only."""
-    # Config is typically at ~/.openclaw/openclaw.json (one level up from workspace)
-    ws = Path(workspace_path)
-    config_paths = [
-        ws.parent / "openclaw.json",          # ~/.openclaw/openclaw.json
-        ws / "openclaw.json",                  # in workspace itself
-        Path.home() / ".openclaw" / "openclaw.json",  # explicit home path
-    ]
-    
-    for config_path in config_paths:
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    config = json.load(f)
-                plugins = config.get("plugins", {}).get("entries", {})
-                # Return only enabled plugin names — no config/secrets
-                return [name for name, entry in plugins.items() 
-                        if isinstance(entry, dict) and entry.get("enabled", True)]
-            except (json.JSONDecodeError, KeyError, TypeError):
-                pass
-    
-    return []
-
-
 def scan_workspace(workspace_path: str) -> dict:
     """Scan workspace and return raw signals."""
     ws = Path(workspace_path)
@@ -232,7 +207,6 @@ def scan_workspace(workspace_path: str) -> dict:
         "text_content": "",   # concatenated text from key files (limited)
         "secrets": [],        # names of secret files (not contents!)
         "skills": [],         # installed skill names
-        "plugins": [],        # installed OpenClaw plugins
         "memory_files": 0,    # count of memory files
         "research_docs": 0,   # count of research docs  
         "scripts": 0,         # count of scripts
@@ -243,9 +217,6 @@ def scan_workspace(workspace_path: str) -> dict:
         "has_cron": False,
         "recent_activity_days": 0,  # days since last file modification
     }
-    
-    # Scan plugins from OpenClaw config
-    signals["plugins"] = scan_plugins(workspace_path)
     
     # Walk workspace (limited depth)
     key_files = ["SOUL.md", "MEMORY.md", "USER.md", "TOOLS.md", "AGENTS.md", 
@@ -434,15 +405,6 @@ def generate_profile(workspace_path: str, max_tags: int = 12) -> dict:
                     integrations.append(integration)
                     break
     
-    # Also check plugin names for integration signals
-    plugin_text = " ".join(signals["plugins"]).lower()
-    for integration, keywords in INTEGRATION_SIGNALS.items():
-        if integration not in integrations:
-            for kw in keywords:
-                if kw.lower() in plugin_text:
-                    integrations.append(integration)
-                    break
-    
     automation = determine_automation_level(signals)
     stage = determine_stage(signals)
     maturity = calculate_maturity_score(signals)
@@ -455,7 +417,6 @@ def generate_profile(workspace_path: str, max_tags: int = 12) -> dict:
         "patterns": patterns[:max_tags],
         "integrations": list(dict.fromkeys(integrations))[:max_tags],  # dedupe, preserve order
         "skills_installed": signals["skills"],  # ClawHub skill slugs
-        "plugins_installed": signals["plugins"],  # OpenClaw plugins
         "automation_level": automation,
         "stage": stage,
         "maturity": maturity
@@ -499,11 +460,6 @@ def print_profile(profile: dict):
     print(f"\n🔌 Integrations ({len(profile['integrations'])}):")
     for i in profile['integrations']:
         print(f"   • {i}")
-    
-    if profile.get('plugins_installed'):
-        print(f"\n🔌 Plugins ({len(profile['plugins_installed'])}):")
-        for p in profile['plugins_installed']:
-            print(f"   • {p}")
     
     print(f"\n🤖 Automation: {profile['automation_level']}")
     print(f"📍 Stage: {profile['stage']}")

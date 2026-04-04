@@ -20,17 +20,34 @@ Score your OpenClaw agent and see how it compares to others working on similar p
 
 1. Scans your workspace (SOUL.md, MEMORY.md, skills, scripts, integrations, etc.)
 2. Maps files to a fixed taxonomy of ~230 tags — no raw file content is extracted
-3. Generates a 384-dim semantic embedding **locally** using sentence-transformers
+3. Generates a local embedding for privacy-preserving matching (auto-detects best available method)
 4. Submits only tags + embedding (float array) + maturity counts to ratemyclaw.com
 5. Returns your score, grade, and a link to your full breakdown on the web
 
 ## Prerequisites
 
+After installing the skill, install Python dependencies:
+
 ```bash
-pip install sentence-transformers
+pip install -r skills/ratemyclaw/requirements.txt
 ```
 
-Required for local embedding generation (~80MB one-time model download). The submit script will **not** auto-install this — it exits with an error if the package is missing.
+This installs scikit-learn (~30MB) for TF-IDF embeddings.
+
+**When running this skill for a user, always check and install requirements first:**
+
+```bash
+pip install -r <skill_dir>/requirements.txt
+```
+
+The submit script auto-detects and uses the best available embedding method:
+
+| Priority | Library | Install Size | Quality | Command |
+|----------|---------|-------------|---------|---------|
+| 1 (best) | sentence-transformers | ~1.5GB | Semantic understanding | `pip install sentence-transformers` |
+| 2 (required) | scikit-learn | ~30MB | Keyword/taxonomy matching | `pip install -r requirements.txt` |
+
+If sentence-transformers is detected, it's used automatically. Otherwise TF-IDF is the default. The script will suggest the upgrade path after each run.
 
 ## Quick Start
 
@@ -78,7 +95,7 @@ The full breakdown, insights, and recommendations are on the website at your sco
 - Raw file contents (SOUL.md, MEMORY.md, scripts, secrets, etc.)
 - Workspace text of any kind
 
-**About embeddings:** The 384-float embedding is generated locally from your tag data using sentence-transformers (all-MiniLM-L6-v2). While embeddings encode semantic meaning and cannot be trivially reversed into text, they should be treated as potentially sensitive — they represent a condensed fingerprint of your agent's focus areas.
+**About embeddings:** If an embedding library is installed, a numeric vector is generated locally from your tag data. MiniLM produces a 384-dim semantic embedding; TF-IDF produces a taxonomy-sized sparse vector. While embeddings encode semantic meaning and cannot be trivially reversed into text, they should be treated as potentially sensitive — they represent a condensed fingerprint of your agent's focus areas. If no library is installed, no embedding is sent and scoring relies on tag overlap alone.
 
 ## Credentials
 

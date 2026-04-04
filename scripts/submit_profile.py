@@ -2,8 +2,10 @@
 Submit a generated profile to RateMyClaw API.
 Generates a privacy-preserving embedding locally before submission.
 
-Prerequisites:
-    pip install sentence-transformers
+Embedding strategy (progressive):
+    1. If sentence-transformers is installed → MiniLM (384-dim, best quality)
+    2. Else if scikit-learn is installed → TF-IDF (lightweight, decent quality)
+    3. Else → tags only (no embedding, still scored on maturity + tag overlap)
 
 Usage:
     RATEMYCLAW_API_KEY=rmc_xxx python3 submit_profile.py [profile.json]
@@ -20,7 +22,8 @@ from pathlib import Path
 
 API_BASE = "https://ratemyclaw.com"
 KEY_FILE = Path(__file__).parent.parent / ".ratemyclaw_key"
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+TAXONOMY_PATH = Path(__file__).parent.parent / "references" / "taxonomy.json"
+MINILM_MODEL = "all-MiniLM-L6-v2"
 
 
 def get_api_key() -> str:
@@ -76,24 +79,8 @@ def get_api_key() -> str:
         sys.exit(1)
 
 
-def generate_embedding(profile: dict) -> list[float]:
-    """Generate a 384-dim embedding locally from the profile's tag data.
-    
-    Builds a text summary from tags, skill slugs, and metadata,
-    then embeds it using sentence-transformers. Only the resulting
-    384 float array is returned — no raw text is ever transmitted.
-    
-    Note: While embeddings cannot be trivially reversed into text,
-    they do encode semantic meaning. Treat them as potentially sensitive.
-    """
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        print("❌ sentence-transformers is required but not installed.")
-        print("   Install it with: pip install sentence-transformers")
-        sys.exit(1)
-    
-    # Build text from structured tags only (not raw file contents)
+def _profile_to_text(profile: dict) -> str:
+    """Convert profile tags to a text string suitable for embedding."""
     parts = []
     for key in ["domains", "tools", "patterns", "integrations"]:
         vals = profile.get(key, [])
@@ -106,18 +93,156 @@ def generate_embedding(profile: dict) -> list[float]:
     parts.append(f"automation level: {profile.get('automation_level', 'unknown')}")
     parts.append(f"stage: {profile.get('stage', 'unknown')}")
     
-    text = ". ".join(parts)
+    return ". ".join(parts)
+
+
+def _detect_embedding_method() -> str:
+    """Detect the best available embedding method.
     
-    print("  ⏳ Loading embedding model (first run downloads ~80MB, may take a minute)...")
-    sys.stdout.flush()
-    model = SentenceTransformer(EMBEDDING_MODEL)
-    print("  ✓ Model loaded")
+    Returns: 'minilm', 'tfidf', or 'none'
+    """
+    try:
+        import sentence_transformers  # noqa: F401
+        return "minilm"
+    except ImportError:
+        pass
     
-    print("  ⏳ Generating embedding...")
-    sys.stdout.flush()
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: F401
+        return "tfidf"
+    except ImportError:
+        pass
+    
+    return "none"
+
+
+def _generate_minilm_embedding(text: str) -> list[float]:
+    """Generate a 384-dim embedding using sentence-transformers MiniLM."""
+    from sentence_transformers import SentenceTransformer
+    model = SentenceTransformer(MINILM_MODEL)
     embedding = model.encode(text).tolist()
-    print(f"  ✓ Generated {len(embedding)}-dim embedding locally")
     return embedding
+
+
+def _generate_tfidf_embedding(text: str) -> list[float]:
+    """Generate a fixed-dimension TF-IDF embedding using the taxonomy as vocabulary.
+    
+    Strategy: Build a vocabulary from all taxonomy tags, compute TF-IDF of the
+    profile text against that vocabulary. This produces a consistent, fixed-dimension
+    vector (one dimension per taxonomy term) that's comparable across agents.
+    """
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    
+    # Load taxonomy to build vocabulary
+    with open(TAXONOMY_PATH) as f:
+        taxonomy = json.load(f)
+    
+    # Build vocabulary: all taxonomy tags as terms
+    # Replace hyphens with spaces so TF-IDF tokenizer matches them
+    vocab_terms = []
+    for category in ["domains", "tools", "patterns", "integrations"]:
+        for tag in taxonomy.get(category, []):
+            vocab_terms.append(tag.replace("-", " "))
+    
+    # Also include the raw hyphenated forms
+    for category in ["domains", "tools", "patterns", "integrations"]:
+        for tag in taxonomy.get(category, []):
+            if "-" in tag:
+                vocab_terms.append(tag)
+    
+    # Deduplicate while preserving order
+    seen = set()
+    unique_vocab = []
+    for t in vocab_terms:
+        if t not in seen:
+            seen.add(t)
+            unique_vocab.append(t)
+    
+    # Use unigrams and bigrams to catch multi-word tags
+    vectorizer = TfidfVectorizer(
+        vocabulary=unique_vocab,
+        token_pattern=r"(?u)\b[\w-]+\b",  # allow hyphens in tokens
+        lowercase=True,
+    )
+    
+    # Fit and transform just our text
+    tfidf_matrix = vectorizer.fit_transform([text.replace("-", " ") + " " + text])
+    embedding = tfidf_matrix.toarray()[0].tolist()
+    
+    return embedding
+
+
+def generate_embedding(profile: dict) -> tuple[list[float] | None, str]:
+    """Generate an embedding locally from the profile's tag data.
+    
+    Tries MiniLM first, falls back to TF-IDF, then to no embedding.
+    
+    Returns: (embedding_vector_or_None, method_string)
+    """
+    method = _detect_embedding_method()
+    text = _profile_to_text(profile)
+    
+    if method == "minilm":
+        print("  🧠 Using MiniLM (sentence-transformers) for semantic embedding...")
+        embedding = _generate_minilm_embedding(text)
+        print(f"  ✓ Generated {len(embedding)}-dim MiniLM embedding locally")
+        return embedding, "minilm"
+    
+    elif method == "tfidf":
+        print("  📊 Using TF-IDF for lightweight embedding (scikit-learn)...")
+        embedding = _generate_tfidf_embedding(text)
+        non_zero = sum(1 for v in embedding if v > 0)
+        print(f"  ✓ Generated {len(embedding)}-dim TF-IDF embedding ({non_zero} active features)")
+        print()
+        print("  💡 For better semantic matching, install sentence-transformers:")
+        print("     pip install sentence-transformers")
+        print()
+        return embedding, "tfidf"
+    
+    else:
+        print("  ⚠️  scikit-learn is required for embeddings but not installed.")
+        print()
+        
+        # Check for requirements.txt relative to this script
+        req_file = Path(__file__).parent.parent / "requirements.txt"
+        install_cmd = f"pip install -r {req_file}" if req_file.exists() else "pip install scikit-learn"
+        
+        # Support non-interactive mode via --yes flag
+        if "--yes" in sys.argv:
+            answer = "y"
+        else:
+            answer = input("     Install now? (~30MB) [Y/n] ").strip().lower()
+        
+        if answer in ("", "y", "yes"):
+            import subprocess
+            print("  📦 Installing dependencies...")
+            if req_file.exists():
+                cmd = [sys.executable, "-m", "pip", "install", "-r", str(req_file)]
+            else:
+                cmd = [sys.executable, "-m", "pip", "install", "scikit-learn"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                print("  ✓ Dependencies installed!")
+                print()
+                # Retry with TF-IDF now available
+                from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: F401
+                print("  📊 Using TF-IDF for lightweight embedding...")
+                embedding = _generate_tfidf_embedding(text)
+                non_zero = sum(1 for v in embedding if v > 0)
+                print(f"  ✓ Generated {len(embedding)}-dim TF-IDF embedding ({non_zero} active features)")
+                print()
+                print("  💡 For better semantic matching, install sentence-transformers:")
+                print("     pip install sentence-transformers")
+                print()
+                return embedding, "tfidf"
+            else:
+                print(f"  ❌ Install failed: {result.stderr.strip()}")
+                print(f"     Try manually: {install_cmd}")
+                sys.exit(1)
+        else:
+            print(f"  ❌ scikit-learn is required. Install with:")
+            print(f"     {install_cmd}")
+            sys.exit(1)
 
 
 def submit(profile_path: str):
@@ -127,8 +252,7 @@ def submit(profile_path: str):
         profile = json.load(f)
     
     print("🔐 Generating embedding locally...")
-    sys.stdout.flush()
-    embedding = generate_embedding(profile)
+    embedding, embedding_method = generate_embedding(profile)
     
     # Build the submission payload
     payload = {
@@ -138,16 +262,15 @@ def submit(profile_path: str):
             "patterns": profile.get("patterns", []),
             "integrations": profile.get("integrations", []),
             "skills_installed": profile.get("skills_installed", []),
-            "plugins_installed": profile.get("plugins_installed", []),
             "automation_level": profile.get("automation_level", "manual"),
             "stage": profile.get("stage", "building"),
         },
-        "embedding": embedding,
+        "embedding": embedding,  # None if no method available
+        "embedding_method": embedding_method,  # "minilm", "tfidf", or "none"
         "maturity": profile.get("maturity", {}),
     }
     
     print("📤 Submitting to ratemyclaw.com (tags + embedding only)...")
-    sys.stdout.flush()
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{API_BASE}/v1/profile",
@@ -167,13 +290,18 @@ def submit(profile_path: str):
         print(f"❌ API error ({e.code}): {body}")
         sys.exit(1)
     
-    overall = result["score"]
-    grade = result["grade"]
-    score_url = result["score_url"]
+    score_data = result.get("score", {})
+    overall = score_data.get("overall", result.get("score", "?"))
+    grade = score_data.get("grade", result.get("grade", "?"))
+    score_url = result.get("score_url", "")
     
     print()
     print(f"  🦞 RateMyClaw Score: {overall}/100  (Grade: {grade})")
     print(f"  {'━' * 40}")
+    if embedding_method != "minilm":
+        print(f"  📊 Embedding: {embedding_method} (upgrade to MiniLM for better matching)")
+    else:
+        print(f"  📊 Embedding: MiniLM (best quality)")
     print()
     print(f"  🔗 View full breakdown: {score_url}")
     print()
